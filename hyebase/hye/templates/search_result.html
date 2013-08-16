@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block content %}
+
+<div class="message" style="margin-left: 50px;">
+	<h3 style="color: green;">
+	{% if messages %}
+  {% for message in messages %}
+  {% if message.tags %} {% endif %}{{ message }}
+  {% endfor %} 
+  {% endif %}
+  </h3>
+</div>
+<span style="color: red">{{ state }}</span>
+
+
+{% if full_name or email %}
+	<h1 style="color: green;">Users</h1>
+{% endif %}
+
+
+{% for i, j, k in full_name %}
+    <form action="/followUsers/" method="post"><!-- Leave action empty to submit to this very same html -->
+        {% csrf_token %} <!-- Django server only accept POST requests with a CSRF token -->
+        {{ i }} {{ j }} 
+        <input type="hidden" name="follow_id" value="{{ k }}" />
+        <input type="submit" value="Follow"><br /> <br />
+    </form>
+{% endfor %}
+
+
+<form action="/updateProfile/" method="get">
+<div id="search" style="float: right;">
+		<input type="text" name="search_input" id="search_input" style="display: inline;" />
+		<input type="hidden" name="button-name" value="search" />
+		<button type="submit">Search</button>
+	</div>
+</form>
+{% endblock %}

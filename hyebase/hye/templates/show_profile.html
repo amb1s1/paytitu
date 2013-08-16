@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block content %}
+
+<style>
+	label, input {
+		margin-left: 30px;
+		margin-top: 20px;
+		
+	}
+	
+
+	#search{
+		margin: auto;
+		float: right;
+	}
+	
+	#followed{
+		margin-top: -200px;
+		float: right;
+	}
+	
+	#unique{
+		width   : 150px;
+		background  : none;
+		cursor  : pointer;
+		font-family : 'voltaeftu-regular',Times New Roman;
+		font-size   : 16px;
+		border  : 1px solid #0f0;
+		margin      : 0px;
+		padding     : 0px;
+		}
+</style>
+
+<script type="text/javascript">
+	// Enable all the text fields, rename value of Edit button and submit the forms
+	
+	function activate(){
+		get_button_name = $("#save_button").text();
+		
+		if (get_button_name == 'Edit'){
+		$(".enable").attr('disabled', false);
+		$("#save_button").text('Save');
+		}
+		
+		else {
+			$("#editProfileForm").submit();
+		}
+		
+	}
+	
+	
+	function search(){
+		document.getElementById('button-name').value="search";
+	}
+   
+</script>
+<div class="message" style="margin-left: 50px;">
+	<h3 style="color: green;">
+	{% if messages %}
+  {% for message in messages %}
+  {% if message.tags %} {% endif %}{{ message }}
+  {% endfor %} 
+  {% endif %}
+  </h3>
+</div>
+
+<div id="profile_form">
+	<form id="editProfileForm" method="get" action="/updateProfile/">
+	{% csrf_token %}
+		<table>
+	<h1 style="margin-left: 40px;">Profile</h1>
+	
+	<!-- Search box -->
+	<div id="search">
+		<input type="text" name="search_input" id="search_input" style="display: inline;" />
+		<button type="submit" onclick="search()">Search</button>
+	</div>
+	<input type="hidden" name="button-name" id="button-name" value="" />
+	
+	{% for i in profile %}
+	<tr>
+		<td><label>Firstname:</label></td>
+		<td><input class="enable" name="firstname" type="text" disabled value="{{ i.firstname }}" /></td> 
+	</tr>
+		
+		
+	<tr>	
+		<td><label>Lastname:</label></td> 
+		<td><input class="enable" name="lastname" type="text" disabled value="{{ i.lastname }}" /></td> 
+	</tr>
+	
+	<tr>
+		<td><label>Email:</label></td> 
+		<td><input class="enable" name="email" type="text" disabled value="{{ i.email }}" /></td> 
+	</tr>	
+	
+	<tr>
+		
+		<td><label>Location:</label></td> 
+		<td><input class="enable" type="text" name="location" disabled value="{{ i.location }}" /></td> 
+	</tr>
+		
+		
+	<tr>	
+		<td><label>Interest:</label></td> 
+		<td><input class="enable" type="text" name="interest" disabled value="{{ i.interest }}" /></td> 
+	</tr>	
+		
+		
+	<tr>	
+		<td><label>Contact:</label></td> 
+		<td><input class="enable" type="text" disabled name="contact" value="{{ i.contact }}" /></td> 
+	</tr>
+	{% endfor %}
+	</table>
+	{% if edit %}
+	<button style="margin: 30px 30px" id='save_button' type='button' onclick='activate()'>Edit</button>
+	{% endif %}
+	</form>
+</div>
+
+<!-- Show the followed users by that user in the right hand side. Make the link clickable for each user.-->
+<div id="followed">
+	{% if users %}
+	<h2 style="color: green; text-decoration: underline;">Followed users</h2>
+	{% endif %}
+	{% for i, j, k in users %}
+    <form action="/showProfile/" method="post"><!-- Leave action empty to submit to this very same html -->
+        {% csrf_token %} <!-- Django server only accept POST requests with a CSRF token -->
+       <button type="submit" id="unique">{{ i }} {{ j }}</button> <br /><br />
+        <input type="hidden" name="id_followed_user" value="{{ k }}" />
+    </form>
+{% endfor %}
+</div>
+
+
+<div id="following">
+	{% if following %}
+	<h2 style="color: purple; text-decoration: underline;">Following users</h2>
+	{% endif %}
+	{% for i, j, k in following %}
+    <form action="/showProfile/" method="post"><!-- Leave action empty to submit to this very same html -->
+        {% csrf_token %} <!-- Django server only accept POST requests with a CSRF token -->
+       <button type="submit" id="unique">{{ i }} {{ j }}</button> <br /><br />
+        <input type="hidden" name="id_followed_user" value="{{ k }}" />
+    </form>
+{% endfor %}
+</div>
+{% endblock %}
+
+

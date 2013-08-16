@@ -1,0 +1,945 @@
+from django.shortcuts import render_to_response, RequestContext, HttpResponseRedirect
+from fileupload.models import File
+import hashlib, MySQLdb, time
+from django.contrib.auth import login, authenticate, logout
+from fileupload.models import File, Share, User, Queue
+import subprocess, os, datetime, glob
+from fileupload.functions import humansize, test_ssh
+from django.utils.timezone import utc
+from fileupload.functions import test_ssh, add_known_hosts, convert_timedelta, duration_conversion, convert_byte, size
+from django.contrib.auth.decorators import login_required
+from django.db.models import Sum
+from itertools import izip_longest
+from django.core.mail import send_mail, send_mass_mail, EmailMessage
+from django.contrib import messages
+from fileupload.tasks import file_transfer, save_db, email_notify, delete_entry, copy_file_loc, email_notify_copy, rename_file
+from celery import chain
+import json, paramiko, socket
+from django.contrib import messages
+from django.db.models import Count
+from fileupload.models import Session
+from fileupload.encrypt import encrypt, decrypt
+from django.conf import settings
+
+
+def login_backend(request):
+    if request.user.is_authenticated():
+        return HttpResponseRedirect('/overview/')
+    if request.method == 'POST':
+        
+        #Get the username and password 
+        username = request.POST['username']
+        password = request.POST['password']
+        user = authenticate(username=username, password=password)   
+        state = "Username or Password Incorrect!"
+        if user is not None:
+            login(request, user)    
+            return HttpResponseRedirect('/overview/')
+        else:
+            return render_to_response('login_backend.html', {'state':state}, context_instance=RequestContext(request))
+    else:
+        return render_to_response('login_backend.html', context_instance=RequestContext(request))
+
+
+def email_reset(request):
+    try:
+        if request.method == 'POST':
+            new_mail = request.POST['username']
+            
+            #Find if user entered e-mail or username
+            if not '@' in new_mail:
+                email = User.objects.filter(username=new_mail).values_list('email')
+                new_mail1 = email[0]
+                username = new_mail
+            ok = ''.join(new_mail1)
+            new_mail = ok
+            else:
+                new_mail1 = new_mail.split(' ')
+                a = User.objects.filter(email=new_mail).values_list('username')
+                a = a[0]
+                b = [str(i) for i in a]
+                username = ''.join(b)
+            test = request.get_full_path()
+            token= request.COOKIES.values()
+            token = ''.join(token)
+            new_url = 'http://10.1.1.44:8000/new_password/'  + token + '/' + new_mail    
+            send_mail('Genalytics: Password Reset', 'Hi ' + username + ',\n \n' + 'You have requested to reset your password on 10.1.1.44:8000.\n \n' + 'To reset your password please visit the following link:\n \n' + new_url + '\n \n' + 'All the best,\n \n' + 'Genalytics Team', 'sachit.adhikari@zurelsoft.com',
+                      new_mail1, fail_silently=False)
+        
+            return render_to_response('message_forgot.html', {'test': test}, context_instance=RequestContext(request))
+        else:
+            return render_to_response('message_forgot.html', context_instance=RequestContext(request))
+    except IndexError:
+        state = 'No account associated with this email address or username.'
+        return render_to_response('forgot_password.html', {'state':state}, context_instance=RequestContext(request))
+
+
+@login_required(login_url='/login_backend/')
+def logout_view(request):
+    '''Log outs the user and redirect to login page.'''
+    
+    logout(request)
+    return HttpResponseRedirect('/login_backend/')
+
+@login_required(login_url='/login_backend/')
+def show_files(request):
+    '''Show the files in the overview section'''
+    try:
+        log_id = request.user.id
+        username = request.user.username
+        b = File.objects.filter(user_id=log_id, flag='A', flag_overview='A')  # Get the user id from session .delete() to use delete
+        
+        total_files = File.objects.filter(user_id=log_id, flag='A').count()
+        total_size = File.objects.filter(user_id=log_id, flag='A')
+        a = [str(i.size) for i in total_size]
+        x = [convert_byte(i) for i in a]
+        
+        #Get the start__date and end__date
+        start_date = [i.start_date for i in b]
+        end_date = [i.end_date for i in b]
+        
+        #start_date = [i.strftime("%B %d, %Y, %I:%M%p") for i in start_date]
+        #end_date = [i.strftime("%B %d, %Y, %I:%M%p") for i in end_date]
+        
+        #duration = end_date - start_date swor
+        #Bind to show in Recently Completed Transfers
+        
+        #recent_transfer = zip(b, )
+        
+        #This is for the pagination. 10-200 in dropdown.
+        if request.GET:
+            if request.GET.getlist('page'):
+                page = request.GET.getlist('page')
+                page = ''.join(page)
+                page = int(page)
+            else:
+                page = 1
+            
+            if request.GET.getlist('limit'):
+                limit = request.GET.getlist('limit')
+                limit = ''.join(limit)
+                limit = int(limit)
+            else:
+                limit = 4
+            if request.GET.getlist('page2'):
+                page2 = request.GET.getlist('page2')
+                page2 = ''.join(page2)
+                page2 = int(page2)
+            else:
+                    page2 = 1
+                
+            if request.GET.getlist('limit2'):
+                limit2 = request.GET.getlist('limit2')
+                limit2 = ''.join(limit2)
+                limit2 = int(limit2)
+            else:
+                limit2 = 4
+        else:
+            page = 1
+            limit = 4
+            page2 = 1
+            limit2 = 4
+        
+       
+        ten = ''
+        twenty = ''
+        fifty = ''
+        hundred = ''
+        two_hundred = ''
+        
+        if limit == 10:
+            ten = 'selected'
+        if limit == 20:
+            twenty = 'selected'
+        if limit == 50:
+            fifty = 'selected'
+        if limit == 100:
+            hundred = 'selected'
+        if limit == 200:
+            two_hundred = 'selected'
+        
+            
+        ten2 = ''
+        twenty2 = ''
+        fifty2 = ''
+        hundred2 = ''
+        two_hundred2 = ''
+        
+        if limit2 == 10:
+            ten2 = 'selected'
+        if limit2 == 20:
+            twenty2 = 'selected'
+        if limit2 == 50:
+            fifty2 = 'selected'
+        if limit2 == 100:
+            hundred2 = 'selected'
+        if limit2 == 200:
+            two_hundred2 = 'selected'
+        
+        
+        if total_size == None:
+            total_size = 0
+        total_size = humansize(sum(x))
+        current_file = Queue.objects.filter(user_id=log_id)
+        
+        current_time = (time.time())
+        x = [i.time_overview for i in current_file]
+        y = [str(i) for i in x]
+        durations = [current_time - float(i) for i in y]
+        test = [i.size for i in current_file]
+        testi = [str(i) for i in test]
+        size_overs = [int(i) for i in testi]
+        
+        email_notify = [i.flag_email for i in current_file]
+        email_notify = [str(i) for i in email_notify]
+        
+        zero = [i.replace('0', '') for i in email_notify]
+        one = [i.replace('1', 'checked') for i in zero]
+
+        
+        j = [i.file_unq_name for i in current_file]
+        k = [str(i) for i in j]
+        s = [settings.DESTINATION+str(request.user.id)+ '/' +i+'*' for i in k]
+        a =  [os.path.getsize(f) for i in s for f in glob.glob(i+'*')]
+        change_size = [int(k) for k in a]
+
+        queue_count = Queue.objects.filter(user_id=log_id).count()
+        recent_count = File.objects.filter(user_id=log_id, flag='A', flag_overview='A').count()
+        
+        return render_to_response('overview.html', {'queue_count':queue_count, 'recent_count':recent_count, 'page2':page2, 'limit2':limit2, 'ten2':ten2, 'twenty2':twenty2, 'fifty2':fifty2, 'hundred2':hundred2, 'two_hundred2':two_hundred2, 'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'email_notify':one, 'change_size':change_size, 'duration':durations, 'size_over':size_overs, 'overview':current_file, 'overview_files': b, 'total_files':total_files, 'total_size':total_size, 'username': username}, context_instance=RequestContext(request))
+    except OSError:
+        return render_to_response('overview.html', {'overview_files': b, 'total_files':total_files, 'total_size':total_size, 'username': username}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')
+def ajax_call(request):
+    current_file = Queue.objects.filter(user_id=request.user.id)
+    
+    #Total Size
+    test = [i.size for i in current_file]
+    testi = [str(i) for i in test]
+    size_overs = [int(i) for i in testi]
+    
+    #Duration
+    
+    current_time = (time.time())
+    x = [i.time_overview for i in current_file]
+    y = [str(i) for i in x]
+    durations = [current_time - float(i) for i in y]
+    
+    #Changing size of the file
+    j = [i.file_unq_name for i in current_file]
+    k = [str(i) for i in j]
+    s = [settings.DESTINATION+str(request.user.id)+ '/' +i+'*' for i in k]
+    a =  [os.path.getsize(f) for i in s for f in glob.glob(i+'*')]
+    change_size = [int(k) for k in a]
+    
+
+    total_info = json.dumps([size_overs, durations, change_size])
+    return render_to_response('ajax.html', {'total_info':total_info}, context_instance=RequestContext(request))
+    #return render_to_response('ajax.html', {'change_size':change_size}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')    
+def delete_files(request):
+    log_id = request.user.id
+    if request.method == 'POST':    
+        if request.POST.get('delete'):
+            choices = request.POST.getlist('choice')  # Get the file name from the as a list
+            for i in choices:
+                File.objects.filter(user_id=log_id, id=i).update(flag='D')
+            messages.success(request, 'File has been successfully deleted.')
+            return HttpResponseRedirect('/deleted_files/')
+        if request.POST.get('share'):
+            choices = request.POST.getlist('choice')
+            person = request.POST.getlist('select')
+            person = ''.join(person)
+            person1 = User.objects.filter(username=person)
+            start_date = datetime.datetime.utcnow().replace(tzinfo=utc)
+            for i, j in izip_longest(choices, person1, fillvalue=person1[0]):
+                a = Share(user_id=log_id, file_id=i, shared_user_id=j.id, shared_date=start_date)
+                a.save()
+            messages.success(request, 'File has been successfully shared.')
+            return HttpResponseRedirect('/shared_by_me/')    
+    else:
+        return render_to_response('uploaded_files.html', context_instance=RequestContext(request))
+
+
+@login_required(login_url='/login_backend/')
+def deleted_files(request):
+    log_id = request.user.id
+    username = request.user.username
+    
+    if request.GET:
+        if request.GET.getlist('page'):
+            page = request.GET.getlist('page')
+            page = ''.join(page)
+            page = int(page)
+        else:
+            page = 1
+        
+        if request.GET.getlist('limit'):
+            limit = request.GET.getlist('limit')
+            limit = ''.join(limit)
+            limit = int(limit)
+        else:
+            limit = 10
+    else:
+        page = 1
+        limit = 10
+        
+    ten = ''
+    twenty = ''
+    fifty = ''
+    hundred = ''
+    two_hundred = ''
+    
+    if limit == 10:
+        ten = 'selected'
+    if limit == 20:
+        twenty = 'selected'
+    if limit == 50:
+        fifty = 'selected'
+    if limit == 100:
+        hundred = 'selected'
+    if limit == 200:
+        two_hundred = 'selected'
+        
+    b = File.objects.filter(user_id=log_id, flag='D')  # Get the user id from session .delete() to use delete
+    deleted_count = File.objects.filter(user_id=log_id, flag='D').count()
+    return render_to_response('deleted_files.html', {'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'result': b, 'username':username, 'deleted_count':deleted_count}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')
+def shared_by_me(request):
+    '''This view list all the files in shared_by_me section.'''
+    try: 
+        log_id = request.user.id
+        username = request.user.username
+        
+        #Shared by me file information
+        file_s = Share.objects.filter(user_id=log_id)
+        
+        #This is for the pagination.
+        if request.GET:
+            if request.GET.getlist('page'):
+                page = request.GET.getlist('page')
+                page = ''.join(page)
+                page = int(page)
+            else:
+                page = 1
+            
+            if request.GET.getlist('limit'):
+                limit = request.GET.getlist('limit')
+                limit = ''.join(limit)
+                limit = int(limit)
+            else:
+                limit = 10
+        else:
+            page = 1
+            limit = 10
+                
+        ten = ''
+        twenty = ''
+        fifty = ''
+        hundred = ''
+        two_hundred = ''
+        
+        if limit == 10:
+            ten = 'selected'
+        if limit == 20:
+            twenty = 'selected'
+        if limit == 50:
+            fifty = 'selected'
+        if limit == 100:
+            hundred = 'selected'
+        if limit == 200:
+            two_hundred = 'selected'
+            
+        b = [i.file_id for i in file_s]
+        c = map(str, b)
+        c = ''.join(c)
+
+        shared_by_me_cn = Share.objects.filter(user_id=log_id).values_list('file').distinct().count()
+
+        shared_with_no = Share.objects.filter(file_id__in = b).values_list('shared_user_id', flat=True).distinct().count()
+        shared_file = File.objects.filter(id__in= Share.objects.filter(user_id = log_id).values_list('file', flat=True)).annotate(count=Count('share__shared_user_id'))    
+        shared_username = User.objects.filter(id__in= Share.objects.filter(user_id = log_id).values_list('shared_user_id', flat=True))
+        share_total_entries = Share.objects.filter(user_id=log_id).count()
+        
+        #shared_username = Share.objects.filter(shared_user_id=log_id)
+        #shared_file = File.objects.filter(id__in = c, users__id = log_id)
+        return render_to_response('shared_by_me.html', {'shared_by_me_count':shared_by_me_cn, 'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'page':page, 'limit':limit, 'shared_by_me':shared_file, 'shared_with':shared_with_no, 'username':username, 'shared_username':shared_username}, context_instance=RequestContext(request))
+    except ValueError:
+        return render_to_response('shared_by_me.html', {'username':username}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')
+def shared_with_me(request):
+    '''This view list all the files in shared_with_me section.'''
+    try: 
+        log_id = request.user.id
+        username = request.user.username
+
+        #Pagination
+        if request.GET:
+            if request.GET.getlist('page'):
+                page = request.GET.getlist('page')
+                page = ''.join(page)
+                page = int(page)
+            else:
+                page = 1
+            
+            if request.GET.getlist('limit'):
+                limit = request.GET.getlist('limit')
+                limit = ''.join(limit)
+                limit = int(limit)
+            else:
+                limit = 10
+        else:
+            page = 1
+            limit = 10
+                
+        ten = ''
+        twenty = ''
+        fifty = ''
+        hundred = ''
+        two_hundred = ''
+        
+        if limit == 10:
+            ten = 'selected'
+        if limit == 20:
+            twenty = 'selected'
+        if limit == 50:
+            fifty = 'selected'
+        if limit == 100:
+            hundred = 'selected'
+        if limit == 200:
+            two_hundred = 'selected'
+            
+        #Shared by me file information
+        file_s = Share.objects.filter(shared_user_id=log_id)
+        b = [i.file_id for i in file_s]
+        c = map(str, b)
+        c = ''.join(c)  
+        
+        shared_with_me_count = Share.objects.filter(shared_user_id=log_id).count()
+        #Shared Person Info
+        shared_by = Share.objects.filter(shared_user_id=log_id)
+        shared_file = File.objects.filter(id__in= Share.objects.filter(shared_user_id = log_id).values_list('file', flat=True))
+        test_s = zip(shared_file, shared_by)
+        return render_to_response('shared_with_me.html', {'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'page':page, 'limit':limit, 'shared_with_me_count':shared_with_me_count, 'test_s':test_s, 'shared_with_me': shared_file, 'username':username, 'shared_by':shared_by}, context_instance=RequestContext(request))
+    except ValueError:
+        return render_to_response('shared_with_me.html', {'username':username}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')
+def unshare(request):
+    '''This view unshare the whole file or unshare the file to specific user depending upon user request.'''
+     
+    if request.POST.get('unshare'):
+        choices = request.POST.getlist('choice_shrd_by_me')
+        for i in choices:
+            Share.objects.filter(file_id=i).delete()
+        messages.success(request, 'File has been successfully unshared.')
+        return HttpResponseRedirect('/shared_by_me/')
+    
+    if request.POST.get('unshare_to_user'):
+        person = request.POST.getlist('unshare_user')
+        choices = request.POST.getlist('choice_shrd_by_me')
+        for i, j in izip_longest(person, choices):
+            Share.objects.filter(shared_user_id=i, file_id=j).delete()
+        messages.success(request, 'File has been successfully unshared.')
+        return HttpResponseRedirect('/shared_by_me/')
+
+
+
+@login_required(login_url='/login_backend/')
+def file_info(request):
+    '''File Information in file transfer'''
+    choice = request.GET.getlist('fileList')
+    filesize = request.GET.getlist('fileSize')
+    filesize = ''.join(filesize)
+    
+    choice = ''.join(choice)
+    x = choice.split(',')
+    total_file = len(x)
+    
+    st1 = float(filesize)
+    
+    st = humansize(st1)
+    
+    exp = int(st1)/50000000
+    n = round(exp)
+    result = str(n).replace('.0', '')
+    return render_to_response('file_info.html', {'total_file':total_file, 'filesize':st, 'result':result}, context_instance=RequestContext(request))
+
+@login_required(login_url='/login_backend/')
+def sync(request):
+    """Sync the files into the server asynchronously"""
+    username = request.user.username
+    choice = request.POST.getlist('choice_transfer')
+    notifyEmail = request.POST.getlist('notifyEmail')
+    file_size_list = request.POST.getlist('size_list') 
+    file_size_list = [str(i) for i in file_size_list]
+    notifyEmail1 = ''.join(notifyEmail)
+    notifyEmail2 = int(notifyEmail1)
+    server_id = request.POST['current_session_id']
+
+    #Get the source, username and the password
+    a = Session.objects.get(id=server_id)
+    source = str(a.source_username) + '@' + str(a.server_full_path) 
+    servername = a.server_name
+    
+    
+    password = a.source_password
+    password = decrypt(password)
+    loop_notify = str(notifyEmail1)
+    for i in choice:
+        source12 = source + '/' + i 
+        start_date1 = datetime.datetime.utcnow().replace(tzinfo=utc)
+        start_date = start_date1.strftime("%B %d, %Y, %H:%M:%S")
+        end_date1 = datetime.datetime.utcnow().replace(tzinfo=utc)
+        end_date = end_date1.strftime("%B %d, %Y, %H:%M:%S")
+        
+        x = start_date.split(' ')
+        y = ''.join(x)
+     
+        basename = os.path.basename(source12) #Get file_name
+        extension = basename.split('.')[1] #Get the file_extension
+        start_time = time.time()
+        
+        #Get the file_size
+        st = size(source12, password)     #Get into bytes
+        st = int(st)                        #Convert into int to apply humansize function
+        f_size = humansize(st)              # Convert into human readable form
+                                        
+        
+        
+        #Check if the e-mail notification is checked or not by the user.
+        
+        if loop_notify == '1':
+            loop_notify = 'checked'
+        else:
+            loop_notify = ''
+
+        file_test = '.' + request.user.username + y + ':' + basename        
+        destination1 = settings.DESTINATION + str(request.user.username) + '/' + file_test
+       
+
+        chain = file_transfer.s(password, source12, destination1) | save_db.s(request.user.id, basename, extension, servername, start_date1, end_date1, f_size) | delete_entry.s(basename, str(request.user.id)) | rename_file.s(file_test, str(request.user.username)) | email_notify.s(notifyEmail2, request.user.id, username)ile_
+        c = Queue(user_id=request.user.id, name=i, source=servername, start_date=start_date1, time_remaining=os.getpid(), size=st, human_size=f_size, time_overview=start_time, file_unq_name=file_test, flag_email=loop_notify)
+        c.save()
+        chain()
+
+    messages.success(request, 'File has been successfully added to the transfer queue.') 
+    return HttpResponseRedirect('/uploaded_files/')
+
+
+@login_required(login_url='/login_backend/')
+def uploaded_files(request):
+    '''This view in the show the uploaded_file information also list the transfer files in the server.'''
+    try:
+        username = request.user.username
+        log_id = request.user.id
+        b = File.objects.filter(user_id=log_id, flag='F')  # Get the user id from session .delete() to use delete
+        c = File.objects.filter(user_id=request.user.id) #The request.user.id is always a 
+        
+        #Get the default session to show at first
+        session_info = Session.objects.filter(user_id=request.user.id, make_default=1)
+        
+        uname = [i.source_username for i in session_info]
+        uname = str(uname[0])
+        
+        fullpath = [i.server_full_path for i in session_info]
+        fullpath = str(fullpath[0])
+    
+        source = uname + '@' + fullpath
+        
+        passw = [i.source_password for i in session_info]
+        password = str(passw[0])
+        password = decrypt(password)        #Decrypt the password
+        
+        command = subprocess.Popen(['sshpass', '-p', password, 'rsync', '--recursive', source],
+                               stdout=subprocess.PIPE).communicate()[0]
+        
+        #Pagination to be shown in the template
+        if request.GET:
+            if request.GET.getlist('page'):
+                page = request.GET.getlist('page')
+                page = ''.join(page)
+                page = int(page)
+            else:
+                page = 1
+            
+            if request.GET.getlist('limit'):
+                limit = request.GET.getlist('limit')
+                limit = ''.join(limit)
+                limit = int(limit)
+            else:
+                limit = 10
+        else:
+            page = 1
+            limit = 10
+            
+        
+        ten = ''
+        twenty = ''
+        fifty = ''
+        hundred = ''
+        two_hundred = ''
+        
+        if limit == 10:
+            ten = 'selected'
+        if limit == 20:
+            twenty = 'selected'
+        if limit == 50:
+            fifty = 'selected'
+        if limit == 100:
+            hundred = 'selected'
+        if limit == 200:
+            two_hundred = 'selected'
+    
+        lines = (x.strip() for x in command.split('\n'))
+        remote = [x.split(None, 4)[-1] for x in lines if x]
+        base_name = [os.path.basename(ok) for ok in remote]
+        
+        files_in_server = base_name[1:] #Get the file_names of server
+        total_files = len(files_in_server)
+        
+        #Get the file_size of each files
+        f_size = (x.strip() for x in command.split('\n'))
+        filesize = [x.split(None, 4)[1] for x in f_size if x] #Get the size of each file in a list
+        filesize_f = [humansize(int(i.replace(',', ''))) for i in filesize[1:]]
+        
+        #Get the date of each files
+        date_f = (x.strip() for x in command.split('\n'))
+        date = [x.split(None, 4)[2] for x in date_f if x]
+        date = date[1:]
+     
+        test = zip(files_in_server, filesize_f, date)
+        
+        total_uploaded = File.objects.filter(user_id=log_id, flag='F').count()      
+        users_b = User.objects.all().exclude(id=log_id)
+        
+        #Show the server path info after the session_name
+        a = Session.objects.get(make_default=1)
+        server_path_info = str(a.file_path)
+        session_id = a.id 
+        
+        #Get the session details to show in the Source
+        session_info_show = Session.objects.filter(user_id=request.user.id)
+        return render_to_response('uploaded_files.html', {'session_id':session_id, 'session_info':session_info_show, 'server_path_info':server_path_info,'total_uploaded':total_uploaded, 'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'test':test, 'files': b, 'username':username, 'files_server':files_in_server, 'file_size':filesize_f, 'date':date, 'total_files':total_files, 'list_users':users_b}, context_instance=RequestContext(request))  
+    except IndexError:
+        session_id = 1
+        if request.GET:
+            if request.GET.getlist('page'):
+                page = request.GET.getlist('page')
+                page = ''.join(page)
+                page = int(page)
+            else:
+                page = 1
+            
+            if request.GET.getlist('limit'):
+                limit = request.GET.getlist('limit')
+                limit = ''.join(limit)
+                limit = int(limit)
+            else:
+                limit = 10
+        else:
+            page = 1
+            limit = 10
+            
+        
+        ten = ''
+        twenty = ''
+        fifty = ''
+        hundred = ''
+        two_hundred = ''
+        
+        if limit == 10:
+            ten = 'selected'
+        if limit == 20:
+            twenty = 'selected'
+        if limit == 50:
+            fifty = 'selected'
+        if limit == 100:
+            hundred = 'selected'
+        if limit == 200:
+            two_hundred = 'selected'
+        username = request.user.username
+        log_id = request.user.id
+        b = File.objects.filter(user_id=log_id, flag='A')
+        total_uploaded = File.objects.filter(user_id=log_id, flag='A').count()      
+        users_b = User.objects.all().exclude(id=log_id)
+        no_session = '''Your session is empty or there's no default session to load. Please create a session first or make a session default.'''
+        return render_to_response('uploaded_files.html', {'session_id':session_id, 'total_uploaded':total_uploaded, 'ten':ten, 'twenty':twenty, 'fifty':fifty, 'hundred':hundred, 'two_hundred':two_hundred, 'page':page, 'limit':limit, 'files': b, 'username':username, 'list_users':users_b}, context_instance=RequestContext(request))  
+
+
+@login_required(login_url='/login_backend/')
+def copy_file(request):
+    '''This view copy files from one user to another user.'''
+    
+    choices = request.POST.getlist('choice_shard_with_me')
+    for i in choices:
+        start_date1 = datetime.datetime.utcnow().replace(tzinfo=utc)
+        start_date = start_date1.strftime("%B %d, %Y, %H:%M%p")
+        new_source = settings.DESTINATION + '/' + i  
+        destination1 = settings.DESTINATION + i 
+        extension = os.path.splitext(i)[1][1:] #Get the file_extension
+        fullname = os.path.join(new_source) #Get the file_full_size to calculate size
+        st = int(os.path.getsize(fullname))
+        f_size = humansize(st)
+        end_date1 = datetime.datetime.utcnow().replace(tzinfo=utc)
+        end_date = end_date1.strftime("%B %d, %Y, %H:%M%p")
+        duration = end_date1 - start_date1
+        dur1 = convert_timedelta(duration)
+        dur = duration_conversion(dur1)
+        file_test = i 
+        chain = copy_file_loc.s(new_source, destination1) | save_db.s(request.user.id, i, extension, start_date, datetime.datetime.utcnow().replace(tzinfo=utc), dur, st, f_size, file_test) | email_notify_copy.s(request.user.id, request.user.username, i)
+        chain()
+    messages.success(request, 'Copy is in progress. Other tasks can be performed while copying the file.')
+    return HttpResponseRedirect('/shared_with_me/')
+
+@login_required(login_url='/login_backend/')
+def clear_overview(request):
+    '''This view change the flag of Recently Completed Transfer to H so that it is not shown after user hits clear.'''
+    log_id = request.user.id
+    choices = request.POST.getlist('choice_recent_comp')
+    for i in choices:
+        File.objects.filter(user_id=log_id, id=i).update(flag_overview='C')
+    return HttpResponseRedirect('/overview/')
+
+
+@login_required(login_url='/login_backend/')
+def current_stop(request):
+    '''This view delete the file from Queue model and kills the process.''' 
+    
+    choices = request.POST.getlist('choice_stop')
+    for i in choices:
+        Queue.objects.filter(id=i, user_id=request.user.id).delete()
+        a = Queue.objects.filter(id=i)
+        x = [i.time_remaining for i in a]
+        for y in x:
+            os.kill(y, 12)
+        
+    return HttpResponseRedirect('/overview/')
+
+@login_required(login_url='/login_backend/')
+def list_session(request):
+    '''This view lists the session.'''
+    
+    p = Session.objects.filter(user_id=request.user.id)
+    
+    #Show the make_default checked in the template
+    
+    x = [i.make_default for i in p]    # Get the make default coloumn
+    y = [str(i) for i in x]            #Convert into string as bool can't be replaced
+    z = [i.replace('True', 'checked') for i in y]   #Replace True with checked
+
+    a = zip(p, z)
+
+    return render_to_response('list_session.html', {'list_session':a}, context_instance=RequestContext(request)) 
+
+
+
+@login_required(login_url='/login_backend/')
+def create_session(request):
+    '''This view creates the session.'''
+    if request.method == 'POST':
+    
+        session_name = request.POST['session_name']
+        source_username = request.POST['source_username']
+        server_path = request.POST['server_path']
+        
+        
+        a = server_path.split(':')
+        server_name = a[0]
+        file_path = a[1] 
+        
+        
+        source_password = request.POST['source_password']
+        source_password = encrypt(source_password)
+        make_default = request.POST.get('make_default', False) #on means make default #True means not make default
+        
+        #Check if the user has previously stored session or not
+        res = Session.objects.filter(user_id=request.user.id)
+        if len(res) == 0:
+         
+            try:              #Directory may already exist
+                os.mkdir('/data/' + str(request.user.username))
+            except OSError:     #Skip if directory alread exist
+                pass        
+            a = Session(user_id=request.user.id, session_name= session_name, server_full_path=server_path, server_name=server_name, file_path = file_path, source_username=source_username,
+                    source_password=source_password, make_default=True)
+            a.save()
+            successful = "Session successfully saved."
+            return render_to_response('create_session.html',  {'successful':successful}, context_instance=RequestContext(request)) 
+        
+        if (len(res) > 0 and make_default is False):
+            a = Session(user_id=request.user.id, session_name= session_name, server_full_path=server_path, server_name=server_name, file_path = file_path, source_username=source_username,
+                    source_password=source_password, make_default=0)
+            a.save()
+            successful = "Session successfully saved."
+            return render_to_response('create_session.html',  {'successful':successful}, context_instance=RequestContext(request)) 
+   
+        else:
+            default = Session.objects.filter(user=request.user.id, make_default=True)
+            if len(default) == 0:
+                a = Session(user_id=request.user.id, session_name= session_name, server_full_path=server_path, server_name=server_name, file_path = file_path, source_username=source_username,
+                        source_password=source_password, make_default=1)
+                a.save()
+                successful = "Session successfully saved."
+                return render_to_response('create_session.html',  {'successful':successful}, context_instance=RequestContext(request)) 
+            
+            else:
+                default = Session.objects.get(user=request.user.id, make_default=True)
+                default.make_default = False
+                default.save()
+            
+                a = Session(user_id=request.user.id, session_name= session_name, server_full_path=server_path, server_name=server_name, file_path = file_path, source_username=source_username,
+                        source_password=source_password, make_default=1)
+                a.save()
+            successful = "Session successfully saved."
+            return render_to_response('create_session.html',  {'successful':successful}, context_instance=RequestContext(request)) 
+    else:
+        
+        return render_to_response('create_session.html', context_instance=RequestContext(request)) 
+
+    
+@login_required(login_url='/login_backend/')
+def edit_session(request):
+    '''This view edits and delete the session. If clicked edit, it passes data to the edit_session to show in the form.'''
+    
+    if request.POST.get('edit'):
+        choices = request.POST.getlist('list_session')
+        for i in choices:
+            edit_session = Session.objects.get(id=i)
+        check = edit_session.make_default
+        if check is True:
+            return render_to_response('edit_session.html', {'edit_session':edit_session, 'checked':'checked'}, context_instance=RequestContext(request))
+        else:
+            return render_to_response('edit_session.html', {'edit_session':edit_session}, context_instance=RequestContext(request))
+    if request.POST.get('delete'):
+        choices = request.POST.getlist('list_session')
+        for i in choices:
+            Session.objects.filter(id=i).delete()
+        messages.success(request, 'Session has been successfully deleted.')
+        return HttpResponseRedirect('/list_session/')
+
+@login_required(login_url='/login_backend/')
+def update_session(request):
+    '''This view takes the data from edit session and updates the session.'''
+    
+    if request.method == 'POST':
+        session_name = request.POST['session_name']
+        source_username = request.POST['source_username']
+        server_path = request.POST['server_path']
+        session_id = request.POST['session_id']   
+        make_default = request.POST.get('make_default', False)
+        if ':' and '/' not in server_path:
+            invalid_adrs = 'Invalid Server Path!!'
+            return render_to_response('edit_session.html',  {'server_path':server_path, 'session_name':session_name, 'source_username':source_username, 'invalid_adrs':invalid_adrs}, context_instance=RequestContext(request)) 
+        
+        a = server_path.split(':')
+        server_name = a[0]
+        server_fullpath = a[1] 
+        
+        if make_default is False:
+            Session.objects.filter(id=session_id).update(session_name=session_name, server_full_path=server_path, server_name=server_name, file_path = server_fullpath, source_username=source_username,
+                    make_default=make_default)
+            messages.success(request, 'Session has been successfully updated.')
+            return HttpResponseRedirect('/list_session/')
+        else:
+            try:
+                default = Session.objects.get(user=request.user.id, make_default=True)
+                default.make_default = False
+                default.save()
+                Session.objects.filter(id=session_id).update(session_name=session_name, server_full_path=server_path, server_name=server_name, file_path = server_fullpath, source_username=source_username,
+                        make_default=make_default)
+                messages.success(request, 'Session has been successfully updated.')
+                return HttpResponseRedirect('/list_session/')
+            except:
+                Session.objects.filter(id=session_id).update(session_name=session_name, server_full_path=server_path, server_name=server_name, file_path = server_fullpath, source_username=source_username,
+                        make_default=make_default)
+                messages.success(request, 'Session has been successfully updated.')
+                return HttpResponseRedirect('/list_session/')
+            
+@login_required(login_url='/login_backend/')       
+def change_path(request):
+    '''This view changes the path of server from drop-down by applying AJAX.'''
+    server_id = request.GET['change_session_id']
+    a = Session.objects.get(id=server_id)
+    a_session_name = a.session_name
+    
+    username = str(a.source_username)
+    fullpath = a.server_full_path
+    source = username + '@' + fullpath
+    password = str(a.source_password)
+    password = decrypt(password)
+    command = subprocess.Popen(['sshpass', '-p', password, 'rsync', '--recursive', source],
+                       stdout=subprocess.PIPE).communicate()[0]
+    lines = (x.strip() for x in command.split('\n'))
+    remote = [x.split(None, 4)[-1] for x in lines if x]
+    base_name = [os.path.basename(ok) for ok in remote]
+    
+    files_in_server = base_name[1:] #Get the file_names of server
+    total_files = len(files_in_server)
+    
+    #Get the file_size of each files
+    f_size = (x.strip() for x in command.split('\n'))
+    filesize = [x.split(None, 4)[1] for x in f_size if x] #Get the size of each file in a list
+    filesize_f = [humansize(int(i.replace(',', ''))) for i in filesize[1:]]
+    
+    #Get the date of each files
+    date_f = (x.strip() for x in command.split('\n'))
+    date = [x.split(None, 4)[2] for x in date_f if x]
+    date = date[1:]
+    
+    file = [0]
+    test = zip(files_in_server, filesize_f, date)
+    session_info = Session.objects.filter(user_id=request.user.id).exclude(id=server_id)
+    server_path_info = str(a.server_fullpath)
+    return render_to_response('list_files.html', {'server_path_info':server_path_info, 'active':a_session_name, 'session_info':session_info, 'test':test, 'limit':10, 'files':file}, context_instance=RequestContext(request))  
+
+@login_required(login_url='/login_backend/')
+def search(request):
+    '''This view takes the input from the uploaded_file and do the search using the search_text.'''
+    search_text = request.GET['search_text']
+    filter = request.GET['selectmode']
+    size = request.GET['size']
+    start_date = request.GET['start_date']
+    result = "No files found with the search text " +  "'" + search_text + "'" '.'
+    
+    if filter == 'filter':
+        files = File.objects.filter(user_id=request.user.id, flag='A', file_name__icontains= search_text)
+        if len(files) == 0:
+            return render_to_response('uploaded_files.html', {'files':files, 'no_result':result, 'total_uploaded':0, 'limit':10}, context_instance=RequestContext(request))
+        else:
+            return render_to_response('uploaded_files.html', {'files':files, 'total_uploaded':len(files), 'limit':10}, context_instance=RequestContext(request))
+   
+    elif filter == 'size':
+        files = File.objects.filter(user_id=request.user.id, flag='A', file_name__icontains=search_text, size__icontains=size)
+        if len(files) == 0:
+            return render_to_response('uploaded_files.html', {'files':files, 'no_result':result, 'total_uploaded':0, 'limit':10}, context_instance=RequestContext(request))
+        else:
+            return render_to_response('uploaded_files.html', {'files':files, 'total_uploaded':len(files), 'limit':10}, context_instance=RequestContext(request))
+    
+    elif filter == 'date':
+        files = File.objects.filter(user_id=request.user.id, flag='A', file_name__icontains=search_text, end_date__icontains=start_date)
+        if len(files) == 0:
+            return render_to_response('uploaded_files.html', {'files':files, 'no_result':result, 'total_uploaded':0, 'limit':10}, context_instance=RequestContext(request))
+        else:
+            return render_to_response('uploaded_files.html', {'files':files, 'total_uploaded':len(files), 'limit':10}, context_instance=RequestContext(request))
+    
+    else:
+        result = "No files found with the search text " +  "'" + search_text + "'" '.'
+        files = ''
+        return render_to_response('uploaded_files.html', {'total_uploaded':0, 'files':files, 'result':result, 'limit':10}, context_instance=RequestContext(request))
+
+
+@login_required(login_url='/login_backend/')        
+def list_users(request):
+    '''Due to the error. Have to remove after debugging.'''
+    pass 
+
+@login_required(login_url='/login_backend/')
+def unshare_user(request):
+    '''Due to the error. Have to remove after debugging.'''
+    pass 
+

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block content %}
+<strong>Welcome {{ user.username }}</strong>
+
+<div id="profile_form">
+	<form action="/createProfile/" method="post">
+	{% csrf_token %}
+	{{ form.as_p }}
+	{{ state }}
+	<input type="submit" value="Create Profile" />
+	</form>
+</div>
+{% endblock %}
