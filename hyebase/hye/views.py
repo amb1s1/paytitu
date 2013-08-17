@@ -4,6 +4,9 @@ from django.views.generic import View
 from hye.forms import loginForm, ProfileForm
 from hye.models import Profile, Follow
 from django.contrib import messages
+from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+
 
 # Or query in SQL
 from django.db.models import Q
@@ -55,26 +58,20 @@ class createProfile(View):
         
         form = ProfileForm(request.POST)
         
+    
         firstname = request.POST['firstname']
         lastname = request.POST['lastname']
-        
-        
         location = request.POST['location']
         interest = request.POST['interest']
         contact = request.POST['contact']
-        email = request.POST['email']
+    
         
         
         # Check whether email is taken or not
-        email = Profile.objects.filter(email=email)
-        
-        if email:
-            state = "Email is already taken"
-            return render_to_response('index.html', {'state':state}, context_instance=RequestContext(request))
         
         
         try:
-            p = Profile(user_id=request.user.id, firstname=firstname, lastname=lastname, email=email,
+            p = Profile(user_id=request.user.id, firstname=firstname, lastname=lastname,
                         location=location, interest=interest, contact=contact)
             p.save()
             return HttpResponseRedirect('/showProfile/')
@@ -166,7 +163,7 @@ class updateProfile(View):
         
             # Search using first, name and email address on Profile model
             
-            p = Profile.objects.filter(Q(firstname__contains=search_input) | Q(lastname__contains=search_input) | Q(email=search_input)).exclude(user_id=request.user.id)
+            p = Profile.objects.filter(Q(firstname__contains=search_input) | Q(lastname__contains=search_input) | Q(user__email__contains=search_input)).exclude(user_id=request.user.id)
             # Show with first_name + last_name --> also send user_ id to show in later user
             first_name = [i.firstname for i in p]
             last_name = [i.lastname for i in p]
@@ -174,18 +171,19 @@ class updateProfile(View):
             get_user_id = [i.user_id for i in p]
             full_name= zip(first_name, last_name, get_user_id)
             
-            email = [i.email for i in p]
+            email = [i.user.email for i in p]
+
             email_and_id = zip(email, get_user_id)
             state = "No user with that name or email."
-            
+            state2 = "You can not follow yourself"
+
             # If no search result
             if len(p) == 0:
                 return render_to_response('search_result.html', {'state':state}, context_instance=RequestContext(request))
-            
-            
+
             # If search results
             else:
-                return render_to_response('search_result.html', {'full_name':full_name}, context_instance=RequestContext(request))
+                return render_to_response('search_result.html', {'full_name':full_name, 'email':email}, context_instance=RequestContext(request))
         
 
                 
@@ -196,15 +194,32 @@ class updateProfile(View):
             interest = request.GET['interest']
             contact = request.GET['contact']
             email = request.GET['email']
+
+
             Profile.objects.filter(user_id=request.user.id).update(firstname=firstname, lastname=lastname, location=location,
-                                                                   interest=interest, contact=contact, email=email)
+                                                                   interest=interest, contact=contact)
+            email_update = Profile.objects.get(user_id=request.user.id)
+            email_update.user.email=email
+            try:
+                email_update.user.full_clean()
+                email_update.user.save()
+                messages.success(request, 'Profile successfully updated')
+                return HttpResponseRedirect('/main/')
+
+            except ValidationError as e:
+                messages.success(request, e.message_dict['email'][0])
+                return HttpResponseRedirect('/main/')
+
+
+
             
             messages.success(request, 'Profile successfully updated')
             return HttpResponseRedirect('/main/')
 
 class followUsers(View):
     def post(self, request):
-        followed_user = request.POST['follow_id']     
+        followed_user = request.POST['follow_id'] 
+        followed_user = User.objects.get(pk=followed_user)    
         
         # Check if user is already followed
         f = Follow.objects.filter(user_id=request.user.id, followed_user=followed_user)

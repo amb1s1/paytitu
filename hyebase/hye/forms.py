@@ -10,7 +10,7 @@ class loginForm(forms.Form):
 class ProfileForm(forms.Form):
     firstname = forms.CharField(max_length=100)
     lastname = forms.CharField(max_length=100)
-    email = forms.EmailField(max_length=100)
+    #email = forms.EmailField(max_length=100)
     location = forms.CharField(max_length=100)
     interest = forms.CharField(max_length=244)
     contact = forms.CharField(max_length=100)

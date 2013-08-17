@@ -23,7 +23,7 @@
 {% for i, j, k in full_name %}
     <form action="/followUsers/" method="post"><!-- Leave action empty to submit to this very same html -->
         {% csrf_token %} <!-- Django server only accept POST requests with a CSRF token -->
-        {{ i }} {{ j }} 
+        {{ i }} {{ j }}
         <input type="hidden" name="follow_id" value="{{ k }}" />
         <input type="submit" value="Follow"><br /> <br />
     </form>
