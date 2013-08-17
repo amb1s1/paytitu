@@ -1,4 +1,4 @@
-# Django settings for hyebase project.
+# Django settings for paytitu project.
 import os
 
 DEBUG = True
@@ -73,7 +73,7 @@ MEDIA_URL = ''
 # Don't put anything in this directory yourself; store your static files
 # in apps' "static/" subdirectories and in STATICFILES_DIRS.
 # Example: "/var/www/example.com/static/"
-STATIC_ROOT = os.path.join(ROOT_PATH, 'hyebase/hye/static')
+STATIC_ROOT = os.path.join(ROOT_PATH, 'paytitu/static')
 
 # URL prefix for static files.
 # Example: "http://example.com/static/", "http://static.example.com/"
@@ -114,13 +114,13 @@ MIDDLEWARE_CLASSES = (
     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
 )
 
-ROOT_URLCONF = 'hyebase.urls'
+ROOT_URLCONF = 'paytitu.urls'
 
 # Python dotted path to the WSGI application used by Django's runserver.
-WSGI_APPLICATION = 'hyebase.wsgi.application'
+WSGI_APPLICATION = 'paytitu.wsgi.application'
 
 TEMPLATE_DIRS = (
-            os.path.join(ROOT_PATH, 'hyebase/hye/templates'),
+            os.path.join(ROOT_PATH, 'paytitu/templates'),
 
 
 )
@@ -133,11 +133,11 @@ INSTALLED_APPS = (
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.admin',
-    'hye',
+    'users',
     'registration',
 )
 
-AUTH_PROFILE_MODULE = 'hye.UserProfile'
+AUTH_PROFILE_MODULE = 'users.UserProfile'
 # A sample logging configuration. The only tangible logging
 # performed by this configuration is to send an email to
 # the site admins on every HTTP 500 error when DEBUG=False.

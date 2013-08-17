@@ -1,8 +1,8 @@
 from django.shortcuts import render_to_response, RequestContext, HttpResponseRedirect
 from django.contrib.auth import authenticate, login, logout
 from django.views.generic import View
-from hye.forms import loginForm, ProfileForm
-from hye.models import Profile, Follow
+from users.forms import loginForm, ProfileForm
+from users.models import Profile, Follow
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
