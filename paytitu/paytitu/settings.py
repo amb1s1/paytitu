@@ -133,11 +133,11 @@ INSTALLED_APPS = (
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.admin',
-    'users',
+    'clients',
     'registration',
 )
 
-AUTH_PROFILE_MODULE = 'users.UserProfile'
+AUTH_PROFILE_MODULE = 'clients.UserProfile'
 # A sample logging configuration. The only tangible logging
 # performed by this configuration is to send an email to
 # the site admins on every HTTP 500 error when DEBUG=False.

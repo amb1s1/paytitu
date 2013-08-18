@@ -2,7 +2,7 @@ from django.conf.urls import patterns, include, url
 from django.contrib import admin
 from django.views.generic import TemplateView
 from django.contrib.auth.decorators import login_required
-from users.views import loginUser, createProfile, showProfile, main, updateProfile, followUsers
+from clients.views import loginUser, createProfile, showProfile, main, updateProfile, followUsers
 admin.autodiscover()
 
 urlpatterns = patterns('',
